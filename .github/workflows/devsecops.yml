@@ -84,7 +84,7 @@ jobs:
 
     trivy:
       name: Scan Images with Trivy
-      needs: ['build-images']
+      needs: ['secret-scan', 'sca-scan', 'pylint-check, 'sast-scan']
       runs-on: self-hosted
       steps:
         - name: Generate Timestamp
