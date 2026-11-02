@@ -163,10 +163,10 @@ jobs:
 
                   if [ "$SAST" = "success" ] && [ "$PYLINT" = "success" ] && [ "$SCA" = "success" ] && [ "$SECRET" = "success" ]; then
                       COLOR=3066993
-                      TITLE="✅ Pipeline LOLOS"
+                      TITLE="✅ Pipeline CI LOLOS"
                   else
                       COLOR=15158332
-                      TITLE="❌ Pipeline GAGAL"
+                      TITLE="❌ Pipeline CI GAGAL"
                   fi
 
                   MSG=$(printf '%s' "$COMMIT_MSG" | head -n1 | cut -c1-100)
@@ -259,10 +259,10 @@ jobs:
 
                     if [ "$TRIVY" = "success" ]; then
                         COLOR=3066993
-                        TITLE="✅ Pipeline LOLOS"
+                        TITLE="✅ Pipeline CD LOLOS"
                     else
                         COLOR=15158332
-                        TITLE="❌ Pipeline GAGAL"
+                        TITLE="❌ Pipeline CD GAGAL"
                     fi
 
                     MSG=$(printf '%s' "$COMMIT_MSG" | head -n1 | cut -c1-100)
@@ -293,7 +293,7 @@ jobs:
                             description: ("Repo: **" + $repo + "**\nBranch: `" + $branch + "`\nOleh: " + $actor + "\nCommit: `" + $sha + "` " + $msg),
                             fields: ([
                                 {name: "Trivy (Container)", value: $trivy_status, inline: true},
-                                {name: "Ringkasan Log Trivy", value: ("```\n" + $trivy_log + "\n```", inline: false}
+                                {name: "Ringkasan Log Trivy", value: ("```\n" + $trivy_log + "\n```"), inline: false}
                             ] + (if $ai != "" then [{name: "Analisis AI (Gemini)", value: $ai}] else [] end))
                         }]}')
 
