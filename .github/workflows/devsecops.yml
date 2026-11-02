@@ -126,27 +126,9 @@ jobs:
           if: always()
           run: rm -f trivy-scan-${{ env.TIMESTAMP }}.log
 
-    # ==========================================
-    # CD STAGE: Deploy ke VM
-    # ==========================================
-    deploy-to-vm:
-        name: Build & Deploy to VirtualBox VM
-        needs: [trivy]
-        runs-on: self-hosted
-        steps:
-            - name: Checkout Source Code
-              uses: actions/checkout@v4
-            - name: Build and Run Container
-              run: |
-                  docker build -t secure-flask-app:latest .
-                  docker stop web-flask || true
-                  docker rm web-flask || true
-                  docker run -d -p 5000:5000 --name web-flask secure-flask-app:latest
-                  docker ps | grep web-flask
-
     notify-discord:
         name: Notify Discord
-        needs: [deploy-to-vm]
+        needs: [sast-scan, pylint-check, sca-scan, secret-scan]
         if: always()
         runs-on: ubuntu-latest
         steps:
@@ -217,9 +199,28 @@ jobs:
 
                   curl -sS -f -H "Content-Type: application/json" -d "$payload" "$DISCORD_WEBHOOK_URL"
 
+
+    # ==========================================
+    # CD STAGE: Deploy ke VM
+    # ==========================================
+    deploy-to-vm:
+        name: Build & Deploy to VirtualBox VM
+        needs: [trivy]
+        runs-on: self-hosted
+        steps:
+            - name: Checkout Source Code
+              uses: actions/checkout@v4
+            - name: Build and Run Container
+              run: |
+                  docker build -t secure-flask-app:latest .
+                  docker stop web-flask || true
+                  docker rm web-flask || true
+                  docker run -d -p 5000:5000 --name web-flask secure-flask-app:latest
+                  docker ps | grep web-flask
+
     notify-discord-cd:
             name: Notify Discord CD
-            needs: [notify-discord]
+            needs: [trivy]
             if: always()
             runs-on: ubuntu-latest
             steps:
