@@ -48,6 +48,9 @@ jobs:
             - name: Run Pylint Check
               run: pylint --fail-under=9.0 app.py
 
+    # ==========================================
+    # CI JOB 3: SCA (pip-audit)
+    # ==========================================
     sca-scan:
         name: SCA Dependency Scan (pip-audit)
         runs-on: ubuntu-latest
@@ -68,6 +71,9 @@ jobs:
             - name: Audit Dependencies
               run: pip-audit -r requirements.txt
 
+    # ==========================================
+    # CI JOB 4: Secret Scanning (Gitleaks)
+    # ==========================================
     secret-scan:
         name: Secret Scanning (Gitleaks)
         runs-on: ubuntu-latest
@@ -81,51 +87,66 @@ jobs:
               uses: gitleaks/gitleaks-action@v2
               env:
                   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-    
+
+    # ==========================================
+    # CI JOB 5: Build Docker Image
+    # ==========================================
     build-images:
         name: Build images with docker
         runs-on: self-hosted
         steps:
-        - name: Checkout Source Code
-          uses: actions/checkout@v4
-        
-        - name: Build Docker Images
-          run: |
-            docker rmi secure-flask-app || true
-            docker build -t secure-flask-app:latest .
+            - name: Checkout Source Code
+              uses: actions/checkout@v4
 
+            - name: Build Docker Images
+              run: |
+                  docker rmi secure-flask-app || true
+                  docker build -t secure-flask-app:latest .
+
+    # ==========================================
+    # CI JOB 6: Container Scan (Trivy) - gerbang terakhir sebelum CD
+    # ==========================================
     trivy:
-      name: Scan Images with Trivy
-      needs: ['secret-scan', 'sca-scan', 'pylint-check', sast-scan, build-images]
-      runs-on: self-hosted
-      steps:
-        - name: Generate Timestamp
-          run: echo "TIMESTAMP=$(date +'%Y-%m-%d_%H-%M-%S')" >> $GITHUB_ENV
+        name: Scan Images with Trivy
+        needs: [secret-scan, sca-scan, pylint-check, sast-scan, build-images]
+        runs-on: self-hosted
+        steps:
+            - name: Generate Timestamp
+              run: echo "TIMESTAMP=$(date +'%Y-%m-%d_%H-%M-%S')" >> $GITHUB_ENV
 
-        - name: Ensure Trivy Cache Directory Exists
-          run: mkdir -p $HOME/.cache/trivy
+            - name: Ensure Trivy Cache Directory Exists
+              run: mkdir -p $HOME/.cache/trivy
 
-        - name: Scan Images with Trivy
-          run: |
-            docker run --rm \
-              -v /var/run/docker.sock:/var/run/docker.sock \
-              -v $HOME/.cache/trivy:/root/.cache/ \
-              aquasec/trivy:0.76.1 image \
-              --severity MEDIUM,HIGH,CRITICAL \
-              --format table \
-              secure-flask-app:latest | tee trivy-scan-${{ env.TIMESTAMP }}.log
+            - name: Scan Images with Trivy
+              # shell: bash wajib agar pipefail aktif, sehingga exit code Trivy
+              # tidak tertutup oleh "| tee" dan job benar-benar gagal saat ada temuan.
+              shell: bash
+              run: |
+                  docker run --rm \
+                    -v /var/run/docker.sock:/var/run/docker.sock \
+                    -v $HOME/.cache/trivy:/root/.cache/ \
+                    aquasec/trivy:0.76.1 image \
+                    --severity HIGH,CRITICAL \
+                    --exit-code 1 \
+                    --format table \
+                    secure-flask-app:latest | tee trivy-scan-${{ env.TIMESTAMP }}.log
+                  # Opsional: tambahkan "--ignore-unfixed \" di atas agar hanya
+                  # temuan yang sudah punya patch yang memblokir pipeline.
 
-        - name: Upload Trivy Logs
-          uses: actions/upload-artifact@v4
-          if: always()
-          with:
-            name: trivy-log-${{ env.TIMESTAMP }}
-            path: trivy-scan-${{ env.TIMESTAMP }}.log
-        
-        - name: Clean Up Local Trivy Log
-          if: always()
-          run: rm -f trivy-scan-${{ env.TIMESTAMP }}.log
+            - name: Upload Trivy Logs
+              uses: actions/upload-artifact@v4
+              if: always()
+              with:
+                  name: trivy-log-${{ env.TIMESTAMP }}
+                  path: trivy-scan-${{ env.TIMESTAMP }}.log
 
+            - name: Clean Up Local Trivy Log
+              if: always()
+              run: rm -f trivy-scan-${{ env.TIMESTAMP }}.log
+
+    # ==========================================
+    # NOTIFIKASI CI
+    # ==========================================
     notify-discord:
         name: Notify Discord
         needs: [sast-scan, pylint-check, sca-scan, secret-scan]
@@ -199,17 +220,18 @@ jobs:
 
                   curl -sS -f -H "Content-Type: application/json" -d "$payload" "$DISCORD_WEBHOOK_URL"
 
-
     # ==========================================
-    # CD STAGE: Deploy ke VM
+    # CD STAGE: Deploy ke VM (hanya setelah merge / push ke main)
     # ==========================================
     deploy-to-vm:
         name: Build & Deploy to VirtualBox VM
         needs: [trivy]
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         runs-on: self-hosted
         steps:
             - name: Checkout Source Code
               uses: actions/checkout@v4
+
             - name: Build and Run Container
               run: |
                   docker build -t secure-flask-app:latest .
@@ -218,83 +240,91 @@ jobs:
                   docker run -d -p 5000:5000 --name web-flask secure-flask-app:latest
                   docker ps | grep web-flask
 
+    # ==========================================
+    # NOTIFIKASI CD (hanya setelah merge / push ke main)
+    # ==========================================
     notify-discord-cd:
-            name: Notify Discord CD
-            needs: [trivy]
-            if: always()
-            runs-on: ubuntu-latest
-            steps:
-                - name: Download Trivy Logs Artifact
-                  uses: actions/download-artifact@v4
-                  with:
-                    pattern: trivy-log-*
-                    path: ./trivy-logs
-                  continue-on-error: true
+        name: Notify Discord CD
+        needs: [trivy, deploy-to-vm]
+        if: always() && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        runs-on: ubuntu-latest
+        steps:
+            - name: Download Trivy Logs Artifact
+              uses: actions/download-artifact@v4
+              with:
+                  pattern: trivy-log-*
+                  path: ./trivy-logs
+              continue-on-error: true
 
-                - name: Kirim hasil ke Discord
-                  env:
-                    DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
-                    TRIVY: ${{ needs.trivy.result }}
-                    REPO: ${{ github.repository }}
-                    BRANCH: ${{ github.head_ref || github.ref_name }}
-                    ACTOR: ${{ github.actor }}
-                    SHA: ${{ github.sha }}
-                    COMMIT_MSG: ${{ github.event.head_commit.message || github.event.pull_request.title }}
-                    RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-                  run: |
-                    if [ -z "$DISCORD_WEBHOOK_URL" ]; then
-                        echo "Webhook Discord tidak tersedia, notifikasi dilewati."
-                        exit 0
-                    fi
+            - name: Kirim hasil ke Discord
+              env:
+                  DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+                  TRIVY: ${{ needs.trivy.result }}
+                  DEPLOY: ${{ needs.deploy-to-vm.result }}
+                  REPO: ${{ github.repository }}
+                  BRANCH: ${{ github.head_ref || github.ref_name }}
+                  ACTOR: ${{ github.actor }}
+                  SHA: ${{ github.sha }}
+                  COMMIT_MSG: ${{ github.event.head_commit.message || github.event.pull_request.title }}
+                  RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+              run: |
+                  if [ -z "$DISCORD_WEBHOOK_URL" ]; then
+                      echo "Webhook Discord tidak tersedia, notifikasi dilewati."
+                      exit 0
+                  fi
 
-                    icon() {
-                        case "$1" in
-                            success) echo "✅ lolos" ;;
-                            failure) echo "❌ gagal" ;;
-                            skipped) echo "⏭️ dilewati" ;;
-                            cancelled) echo "⚪ dibatalkan" ;;
-                            *) echo "❓ $1" ;;
-                        esac
-                    }
+                  icon() {
+                      case "$1" in
+                          success) echo "✅ lolos" ;;
+                          failure) echo "❌ gagal" ;;
+                          skipped) echo "⏭️ dilewati" ;;
+                          cancelled) echo "⚪ dibatalkan" ;;
+                          *) echo "❓ $1" ;;
+                      esac
+                  }
 
-                    if [ "$TRIVY" = "success" ]; then
-                        COLOR=3066993
-                        TITLE="✅ Pipeline CD LOLOS"
-                    else
-                        COLOR=15158332
-                        TITLE="❌ Pipeline CD GAGAL"
-                    fi
+                  if [ "$TRIVY" = "success" ] && [ "$DEPLOY" = "success" ]; then
+                      COLOR=3066993
+                      TITLE="✅ Pipeline CD LOLOS"
+                  else
+                      COLOR=15158332
+                      TITLE="❌ Pipeline CD GAGAL"
+                  fi
 
-                    MSG=$(printf '%s' "$COMMIT_MSG" | head -n1 | cut -c1-100)
-                    AI=$(cat /tmp/ai.txt 2>/dev/null || true)
+                  MSG=$(printf '%s' "$COMMIT_MSG" | head -n1 | cut -c1-100)
+                  AI=$(cat /tmp/ai.txt 2>/dev/null || true)
 
-                    TRIVY_SUMMARY="Tidak ada log"
-                    LOG_FILE=$(find ./trivy-logs -name "*.log" | head -n 1)
-                    if [ -f "$LOG_FILE" ]; then
-                        if [ -z "$TRIVY_SUMMARY" ]; then
-                            TRIVY_SUMMARY="Log kosong atau scan berhasil tanpa output teks."
-                        fi
-                    fi
+                  # Ringkasan log Trivy (dipotong agar muat di batas 1024 karakter field Discord)
+                  TRIVY_SUMMARY="Tidak ada log"
+                  LOG_FILE=$(find ./trivy-logs -name "*.log" 2>/dev/null | head -n 1)
+                  if [ -n "$LOG_FILE" ] && [ -f "$LOG_FILE" ]; then
+                      TRIVY_SUMMARY=$(head -c 900 "$LOG_FILE")
+                      if [ -z "$TRIVY_SUMMARY" ]; then
+                          TRIVY_SUMMARY="Log kosong atau scan berhasil tanpa temuan."
+                      fi
+                  fi
 
-                    payload=$(jq -n \
-                        --arg title "$TITLE" \
-                        --arg url "$RUN_URL" \
-                        --argjson color "$COLOR" \
-                        --arg repo "$REPO" \
-                        --arg branch "$BRANCH" \
-                        --arg actor "$ACTOR" \
-                        --arg sha "${SHA:0:7}" \
-                        --arg msg "$MSG" \
-                        --arg trivy_status "$(icon "$TRIVY")" \
-                        --arg trivy_log "$LOG_FILE" \
-                        --arg ai "$AI" \
-                        '{embeds: [{
-                            title: $title, url: $url, color: $color,
-                            description: ("Repo: **" + $repo + "**\nBranch: `" + $branch + "`\nOleh: " + $actor + "\nCommit: `" + $sha + "` " + $msg),
-                            fields: ([
-                                {name: "Trivy (Container)", value: $trivy_status, inline: true},
-                                {name: "Ringkasan Log Trivy", value: ("```\n" + $trivy_log + "\n```"), inline: false}
-                            ] + (if $ai != "" then [{name: "Analisis AI (Gemini)", value: $ai}] else [] end))
-                        }]}')
+                  payload=$(jq -n \
+                      --arg title "$TITLE" \
+                      --arg url "$RUN_URL" \
+                      --argjson color "$COLOR" \
+                      --arg repo "$REPO" \
+                      --arg branch "$BRANCH" \
+                      --arg actor "$ACTOR" \
+                      --arg sha "${SHA:0:7}" \
+                      --arg msg "$MSG" \
+                      --arg trivy_status "$(icon "$TRIVY")" \
+                      --arg deploy_status "$(icon "$DEPLOY")" \
+                      --arg trivy_log "$TRIVY_SUMMARY" \
+                      --arg ai "$AI" \
+                      '{embeds: [{
+                          title: $title, url: $url, color: $color,
+                          description: ("Repo: **" + $repo + "**\nBranch: `" + $branch + "`\nOleh: " + $actor + "\nCommit: `" + $sha + "` " + $msg),
+                          fields: ([
+                              {name: "Trivy (Container)", value: $trivy_status, inline: true},
+                              {name: "Deploy ke VM", value: $deploy_status, inline: true},
+                              {name: "Ringkasan Log Trivy", value: ("```\n" + $trivy_log + "\n```"), inline: false}
+                          ] + (if $ai != "" then [{name: "Analisis AI (Gemini)", value: $ai}] else [] end))
+                      }]}')
 
-                    curl -sS -f -H "Content-Type: application/json" -d "$payload" "$DISCORD_WEBHOOK_URL"
+                  curl -sS -f -H "Content-Type: application/json" -d "$payload" "$DISCORD_WEBHOOK_URL"
