@@ -86,10 +86,10 @@ jobs:
         runs-on: self-hosted
         steps:
         - name: Checkout Source Code
-            uses: actions/checkout@v4
+          uses: actions/checkout@v4
         
         - name: Build Docker Images
-            run: |
+          run: |
             docker rmi secure-flask-app || true
             docker build -t secure-flask-app:latest .
 
