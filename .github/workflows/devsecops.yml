@@ -293,7 +293,7 @@ jobs:
                             description: ("Repo: **" + $repo + "**\nBranch: `" + $branch + "`\nOleh: " + $actor + "\nCommit: `" + $sha + "` " + $msg),
                             fields: ([
                                 {name: "Trivy (Container)", value: $trivy_status, inline: true},
-                                {name: "Ringkasan Log Trivy", value: ("```\n" + $trivy_log + "\n```", false}
+                                {name: "Ringkasan Log Trivy", value: ("```\n" + $trivy_log + "\n```", inline: false}
                             ] + (if $ai != "" then [{name: "Analisis AI (Gemini)", value: $ai}] else [] end))
                         }]}')
 
