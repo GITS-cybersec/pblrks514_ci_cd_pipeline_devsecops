@@ -48,7 +48,10 @@ def index():
         "index.html", message=message, status_class=status_class
     )
 
-if __name__ == "__main__":
-    init_db()
-    app.run(host="0.0.0.0", port=5000)  # nosemgrep
+@app.route("/dashboard")
+def dashboard():
+    """Route tambahan untuk pengujian CI/CD."""
+    return "Selamat Datang di Dashboard Baru!"
 
+init_db()
+#    app.run(host="0.0.0.0", port=5000)  # nosemgrep
