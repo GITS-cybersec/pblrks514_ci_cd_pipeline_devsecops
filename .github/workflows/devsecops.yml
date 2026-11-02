@@ -216,3 +216,88 @@ jobs:
                       }]}')
 
                   curl -sS -f -H "Content-Type: application/json" -d "$payload" "$DISCORD_WEBHOOK_URL"
+
+    notify-discord-cd:
+            name: Notify Discord CD
+            needs: [notify-discord]
+            if: always()
+            runs-on: ubuntu-latest
+            steps:
+                - name: Download Trivy Logs Artifact
+                  uses: actions/download-artifact@v4
+                  with:
+                    pattern: trivy-log-*
+                    path: ./trivy-logs
+                  continue-on-error: true
+
+                - name: Kirim hasil ke Discord
+                  env:
+                    DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+                    TRIVY: ${{ needs.trivy.result }}
+                    REPO: ${{ github.repository }}
+                    BRANCH: ${{ github.head_ref || github.ref_name }}
+                    ACTOR: ${{ github.actor }}
+                    SHA: ${{ github.sha }}
+                    COMMIT_MSG: ${{ github.event.head_commit.message || github.event.pull_request.title }}
+                    RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+                  run: |
+                    if [ -z "$DISCORD_WEBHOOK_URL" ]; then
+                        echo "Webhook Discord tidak tersedia, notifikasi dilewati."
+                        exit 0
+                    fi
+
+                    icon() {
+                        case "$1" in
+                            success) echo "✅ lolos" ;;
+                            failure) echo "❌ gagal" ;;
+                            skipped) echo "⏭️ dilewati" ;;
+                            cancelled) echo "⚪ dibatalkan" ;;
+                            *) echo "❓ $1" ;;
+                        esac
+                    }
+
+                    if [ "$TRIVY" = "success" ]; then
+                        COLOR=3066993
+                        TITLE="✅ Pipeline LOLOS"
+                    else
+                        COLOR=15158332
+                        TITLE="❌ Pipeline GAGAL"
+                    fi
+
+                    MSG=$(printf '%s' "$COMMIT_MSG" | head -n1 | cut -c1-100)
+                    AI=$(cat /tmp/ai.txt 2>/dev/null || true)
+
+                    TRIVY_SUMMARY="Tidak ada log"
+                    LOG_FILE=$(find ./trivy-logs -name "*.log" | head -n 1)
+                    if [ -f "$LOG_FILE" ]; then
+                        if [ -z "$TRIVY_SUMMARY" ]; then
+                            TRIVY_SUMMARY="Log kosong atau scan berhasil tanpa output teks."
+                        fi
+                    fi
+
+                    payload=$(jq -n \
+                        --arg title "$TITLE" \
+                        --arg url "$RUN_URL" \
+                        --argjson color "$COLOR" \
+                        --arg repo "$REPO" \
+                        --arg branch "$BRANCH" \
+                        --arg actor "$ACTOR" \
+                        --arg sha "${SHA:0:7}" \
+                        --arg msg "$MSG" \
+                        --arg sast "$(icon "$SAST")" \
+                        --arg pylint "$(icon "$PYLINT")" \
+                        --arg sca "$(icon "$SCA")" \
+                        --arg secret "$(icon "$SECRET")" \
+                        --arg trivy_status "$(icon "$TRIVY")" \
+                        --arg trivy_log "$LOG_FILE" \
+                        --arg ai "$AI" \
+                        '{embeds: [{
+                            title: $title, url: $url, color: $color,
+                            description: ("Repo: **" + $repo + "**\nBranch: `" + $branch + "`\nOleh: " + $actor + "\nCommit: `" + $sha + "` " + $msg),
+                            fields: ([
+                                {name: "Trivy (Container)", value: $trivy_status, inline: true},
+                                {name: "Ringkasan Log Trivy", value: ("```\n" + $trivy_log + "\n```", false}
+                            ] + (if $ai != "" then [{name: "Analisis AI (Gemini)", value: $ai}] else [] end))
+                        }]}')
+
+                    curl -sS -f -H "Content-Type: application/json" -d "$payload" "$DISCORD_WEBHOOK_URL"
