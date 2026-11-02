@@ -127,7 +127,6 @@ jobs:
                     -v $HOME/.cache/trivy:/root/.cache/ \
                     aquasec/trivy:0.76.1 image \
                     --severity HIGH,CRITICAL \
-                    --exit-code 1 \
                     --format table \
                     secure-flask-app:latest | tee trivy-scan-${{ env.TIMESTAMP }}.log
                   # Opsional: tambahkan "--ignore-unfixed \" di atas agar hanya

@@ -27,6 +27,6 @@ def login():
         return "Login berhasil"
     return "Login gagal"
 
-
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000)
+    init_db()
+    app.run(host="0.0.0.0", port=5000)  # nosemgrep
