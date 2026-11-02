@@ -84,7 +84,7 @@ jobs:
 
     trivy:
       name: Scan Images with Trivy
-      needs: ['secret-scan', 'sca-scan', 'pylint-check']
+      needs: ['secret-scan', 'sca-scan', 'pylint-check', sast-scan]
       runs-on: self-hosted
       steps:
         - name: Generate Timestamp
@@ -119,7 +119,7 @@ jobs:
     # ==========================================
     deploy-to-vm:
         name: Build & Deploy to VirtualBox VM
-        needs: [sast-scan, pylint-check]
+        needs: [sast-scan, pylint-check, trivy]
         runs-on: self-hosted
         steps:
             - name: Checkout Source Code
@@ -134,7 +134,7 @@ jobs:
 
     notify-discord:
         name: Notify Discord
-        needs: [sast-scan, pylint-check, sca-scan, secret-scan]
+        needs: [sast-scan, pylint-check, sca-scan, secret-scan, trivy]
         if: always()
         runs-on: ubuntu-latest
         steps:
