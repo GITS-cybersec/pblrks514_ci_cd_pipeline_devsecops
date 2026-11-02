@@ -81,6 +81,7 @@ jobs:
               uses: gitleaks/gitleaks-action@v2
               env:
                   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    
     build-images:
         name: Build images with docker
         runs-on: self-hosted
@@ -95,7 +96,7 @@ jobs:
 
     trivy:
       name: Scan Images with Trivy
-      needs: ['secret-scan', 'sca-scan', 'pylint-check', sast-scan]
+      needs: ['secret-scan', 'sca-scan', 'pylint-check', sast-scan, build-images]
       runs-on: self-hosted
       steps:
         - name: Generate Timestamp
@@ -130,7 +131,7 @@ jobs:
     # ==========================================
     deploy-to-vm:
         name: Build & Deploy to VirtualBox VM
-        needs: [sast-scan, pylint-check, trivy]
+        needs: [trivy]
         runs-on: self-hosted
         steps:
             - name: Checkout Source Code
@@ -145,7 +146,7 @@ jobs:
 
     notify-discord:
         name: Notify Discord
-        needs: [sast-scan, pylint-check, sca-scan, secret-scan, trivy]
+        needs: [deploy-to-vm]
         if: always()
         runs-on: ubuntu-latest
         steps:
