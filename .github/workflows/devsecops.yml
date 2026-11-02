@@ -81,6 +81,17 @@ jobs:
               uses: gitleaks/gitleaks-action@v2
               env:
                   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    build-images:
+        name: Build images with docker
+        runs-on: self-hosted
+        steps:
+        - name: Checkout Source Code
+            uses: actions/checkout@v4
+        
+        - name: Build Docker Images
+            run: |
+            docker rmi secure-flask-app || true
+            docker build -t secure-flask-app:latest .
 
     trivy:
       name: Scan Images with Trivy
@@ -101,7 +112,7 @@ jobs:
               aquasec/trivy:0.76.1 image \
               --severity MEDIUM,HIGH,CRITICAL \
               --format table \
-              aplikasi-513:latest | tee trivy-scan-${{ env.TIMESTAMP }}.log
+              secure-flask-app:latest | tee trivy-scan-${{ env.TIMESTAMP }}.log
 
         - name: Upload Trivy Logs
           uses: actions/upload-artifact@v4
