@@ -2,9 +2,9 @@ name: DevSecOps CI/CD Pipeline
 
 on:
     push:
-        branches: ["main", "master"]
+        branches: ["developement"]
     pull_request:
-        branches: ["main", "master"]
+        branches: ["developement"]
     workflow_dispatch: {}
 
 jobs:
