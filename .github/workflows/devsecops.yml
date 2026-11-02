@@ -82,13 +82,44 @@ jobs:
               env:
                   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+    trivy:
+      name: Scan Images with Trivy
+      needs: ['secret-scan', 'sca-scan', 'pylint-check', sast-scan]
+      runs-on: self-hosted
+      steps:
+        - name: Generate Timestamp
+          run: echo "TIMESTAMP=$(date +'%Y-%m-%d_%H-%M-%S')" >> $GITHUB_ENV
+
+        - name: Ensure Trivy Cache Directory Exists
+          run: mkdir -p $HOME/.cache/trivy
+
+        - name: Scan Images with Trivy
+          run: |
+            docker run --rm \
+              -v /var/run/docker.sock:/var/run/docker.sock \
+              -v $HOME/.cache/trivy:/root/.cache/ \
+              aquasec/trivy:0.76.1 image \
+              --severity MEDIUM,HIGH,CRITICAL \
+              --format table \
+              aplikasi-513:latest | tee trivy-scan-${{ env.TIMESTAMP }}.log
+
+        - name: Upload Trivy Logs
+          uses: actions/upload-artifact@v4
+          if: always()
+          with:
+            name: trivy-log-${{ env.TIMESTAMP }}
+            path: trivy-scan-${{ env.TIMESTAMP }}.log
+        
+        - name: Clean Up Local Trivy Log
+          if: always()
+          run: rm -f trivy-scan-${{ env.TIMESTAMP }}.log
 
     # ==========================================
     # CD STAGE: Deploy ke VM
     # ==========================================
     deploy-to-vm:
         name: Build & Deploy to VirtualBox VM
-        needs: [sast-scan, pylint-check]
+        needs: [sast-scan, pylint-check, trivy]
         runs-on: self-hosted
         steps:
             - name: Checkout Source Code
@@ -103,7 +134,7 @@ jobs:
 
     notify-discord:
         name: Notify Discord
-        needs: [sast-scan, pylint-check, sca-scan, secret-scan]
+        needs: [sast-scan, pylint-check, sca-scan, secret-scan, trivy]
         if: always()
         runs-on: ubuntu-latest
         steps:
