@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}Daftar Akun{% endblock %}
+{% block heading %}Buat Akun{% endblock %}
+{% block content %}
+<!-- nosemgrep: python.django.security.django-no-csrf-token.django-no-csrf-token -->
+<form method="POST" action="{{ url_for('register') }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}" />
+    <div class="form-group">
+        <label for="username">Nama Pengguna</label>
+        <input type="text" id="username" name="username" value="{{ username }}" required minlength="3" maxlength="30" pattern="[A-Za-z0-9_]+" autofocus />
+    </div>
+    <div class="form-group">
+        <label for="email">Email</label>
+        <input type="email" id="email" name="email" value="{{ email }}" required maxlength="120" />
+    </div>
+    <div class="form-group">
+        <label for="password">Kata Sandi (minimal 8 karakter)</label>
+        <input type="password" id="password" name="password" required minlength="8" maxlength="128" />
+    </div>
+    <div class="form-group">
+        <label for="confirm_password">Ulangi Kata Sandi</label>
+        <input type="password" id="confirm_password" name="confirm_password" required minlength="8" maxlength="128" />
+    </div>
+    <button type="submit">Daftar</button>
+</form>
+<p class="switch">Sudah punya akun? <a href="{{ url_for('index') }}">Masuk</a></p>
+{% endblock %}
