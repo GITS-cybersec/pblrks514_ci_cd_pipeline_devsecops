@@ -89,7 +89,48 @@ jobs:
                   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
     # ==========================================
-    # CI JOB 5: Build Docker Image
+    # CI JOB 5: Environment Check (.env)
+    # ==========================================
+    env-check:
+        name: Environment (.env) Check
+        runs-on: ubuntu-latest
+        steps:
+            - name: Checkout Source Code
+              uses: actions/checkout@v4
+
+            - name: Pastikan file .env tidak ter-commit
+              run: |
+                  LEAKED=$(git ls-files | grep -E '(^|/)\.env(\..+)?$' | grep -vE '(^|/)\.env\.example$' || true)
+                  if [ -n "$LEAKED" ]; then
+                      echo "::error::File environment ikut ter-commit: $LEAKED"
+                      echo "Hapus dari git: git rm --cached <file>, lalu ganti semua nilai rahasia di dalamnya."
+                      exit 1
+                  fi
+                  echo "OK: tidak ada file .env yang ter-commit."
+
+            - name: Pastikan .env.example sinkron dengan app.py
+              run: |
+                  test -f .env.example || { echo "::error::.env.example tidak ditemukan"; exit 1; }
+                  KEYS=$(grep -oE '(require_env|os\.getenv)\("[A-Z0-9_]+"' app.py | sed -E 's/.*\("//; s/"$//' | sort -u)
+                  FAILED=0
+                  for key in $KEYS; do
+                      if ! grep -qE "^${key}=" .env.example; then
+                          echo "::error::Variabel $key dipakai di app.py tetapi belum ada di .env.example"
+                          FAILED=1
+                      fi
+                  done
+                  [ "$FAILED" -eq 0 ] && echo "OK: semua variabel app.py terdaftar di .env.example:" && echo "$KEYS"
+                  exit $FAILED
+
+            - name: Pastikan .env tidak masuk ke image Docker
+              run: |
+                  test -f .dockerignore || { echo "::error::.dockerignore tidak ditemukan"; exit 1; }
+                  grep -qxE '\.env' .dockerignore || { echo "::error::.dockerignore harus memuat baris .env"; exit 1; }
+                  grep -qxE '\.env' .gitignore || { echo "::error::.gitignore harus memuat baris .env"; exit 1; }
+                  echo "OK: .env diabaikan oleh git dan docker."
+
+    # ==========================================
+    # CI JOB 6: Build Docker Image
     # ==========================================
     build-images:
         name: Build images with docker
@@ -104,11 +145,11 @@ jobs:
                   docker build -t secure-flask-app:latest .
 
     # ==========================================
-    # CI JOB 6: Container Scan (Trivy) - gerbang terakhir sebelum CD
+    # CI JOB 7: Container Scan (Trivy) - gerbang terakhir sebelum CD
     # ==========================================
     trivy:
         name: Scan Images with Trivy
-        needs: [secret-scan, sca-scan, pylint-check, sast-scan, build-images]
+        needs: [secret-scan, sca-scan, pylint-check, sast-scan, env-check, build-images]
         runs-on: self-hosted
         steps:
             - name: Generate Timestamp
@@ -148,7 +189,7 @@ jobs:
     # ==========================================
     notify-discord:
         name: Notify Discord
-        needs: [sast-scan, pylint-check, sca-scan, secret-scan]
+        needs: [sast-scan, pylint-check, sca-scan, secret-scan, env-check]
         if: always()
         runs-on: ubuntu-latest
         steps:
@@ -159,6 +200,7 @@ jobs:
                   PYLINT: ${{ needs.pylint-check.result }}
                   SCA: ${{ needs.sca-scan.result }}
                   SECRET: ${{ needs.secret-scan.result }}
+                  ENVCHECK: ${{ needs.env-check.result }}
                   REPO: ${{ github.repository }}
                   BRANCH: ${{ github.head_ref || github.ref_name }}
                   ACTOR: ${{ github.actor }}
@@ -181,7 +223,7 @@ jobs:
                       esac
                   }
 
-                  if [ "$SAST" = "success" ] && [ "$PYLINT" = "success" ] && [ "$SCA" = "success" ] && [ "$SECRET" = "success" ]; then
+                  if [ "$SAST" = "success" ] && [ "$PYLINT" = "success" ] && [ "$SCA" = "success" ] && [ "$SECRET" = "success" ] && [ "$ENVCHECK" = "success" ]; then
                       COLOR=3066993
                       TITLE="✅ Pipeline CI LOLOS"
                   else
@@ -205,6 +247,7 @@ jobs:
                       --arg pylint "$(icon "$PYLINT")" \
                       --arg sca "$(icon "$SCA")" \
                       --arg secret "$(icon "$SECRET")" \
+                      --arg envcheck "$(icon "$ENVCHECK")" \
                       --arg ai "$AI" \
                       '{embeds: [{
                           title: $title, url: $url, color: $color,
@@ -213,7 +256,8 @@ jobs:
                               {name: "Semgrep (SAST)", value: $sast, inline: true},
                               {name: "Pylint (kualitas)", value: $pylint, inline: true},
                               {name: "pip-audit (SCA)", value: $sca, inline: true},
-                              {name: "Gitleaks (secret)", value: $secret, inline: true}
+                              {name: "Gitleaks (secret)", value: $secret, inline: true},
+                              {name: "Cek .env", value: $envcheck, inline: true}
                           ] + (if $ai != "" then [{name: "Analisis AI (Gemini)", value: $ai}] else [] end))
                       }]}')
 
@@ -232,12 +276,67 @@ jobs:
               uses: actions/checkout@v4
 
             - name: Build and Run Container
+              # Nilai rahasia diambil dari GitHub Secrets dan diteruskan ke
+              # container lewat "docker run -e NAMA" (tanpa nilai di command line),
+              # sehingga tidak muncul di daftar proses maupun di dalam repo.
+              shell: bash
+              env:
+                  SECRET_KEY: ${{ secrets.SECRET_KEY }}
+                  DB_HOST: mysql-flask
+                  DB_PORT: "3306"
+                  DB_NAME: flaskapp
+                  DB_USER: flaskuser
+                  DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+                  # Variabel khusus image mysql (dipakai hanya saat volume masih kosong)
+                  MYSQL_ROOT_PASSWORD: ${{ secrets.DB_ROOT_PASSWORD }}
+                  MYSQL_DATABASE: flaskapp
+                  MYSQL_USER: flaskuser
+                  MYSQL_PASSWORD: ${{ secrets.DB_PASSWORD }}
               run: |
+                  set -euo pipefail
+
+                  # Gagal cepat bila secret belum dibuat di GitHub
+                  : "${SECRET_KEY:?Secret SECRET_KEY belum diatur di GitHub}"
+                  : "${DB_PASSWORD:?Secret DB_PASSWORD belum diatur di GitHub}"
+                  : "${MYSQL_ROOT_PASSWORD:?Secret DB_ROOT_PASSWORD belum diatur di GitHub}"
+
+                  docker network inspect flask-net >/dev/null 2>&1 || docker network create flask-net
+
+                  # MySQL dibuat sekali; data disimpan di volume agar aman saat redeploy
+                  if ! docker ps -a --format '{{.Names}}' | grep -qx mysql-flask; then
+                      docker run -d --name mysql-flask --network flask-net \
+                        --restart unless-stopped \
+                        -e MYSQL_ROOT_PASSWORD -e MYSQL_DATABASE -e MYSQL_USER -e MYSQL_PASSWORD \
+                        -v mysql-flask-data:/var/lib/mysql \
+                        --health-cmd "mysqladmin ping -h 127.0.0.1 --silent" \
+                        --health-interval 5s --health-retries 30 \
+                        mysql:8.0
+                  else
+                      docker start mysql-flask >/dev/null
+                  fi
+
+                  echo "Menunggu MySQL siap..."
+                  for i in $(seq 1 60); do
+                      STATUS=$(docker inspect -f '{{.State.Health.Status}}' mysql-flask)
+                      [ "$STATUS" = "healthy" ] && break
+                      sleep 2
+                  done
+                  if [ "$STATUS" != "healthy" ]; then
+                      echo "::error::MySQL tidak siap (status: $STATUS)"
+                      docker logs --tail 50 mysql-flask
+                      exit 1
+                  fi
+
                   docker build -t secure-flask-app:latest .
                   docker stop web-flask || true
                   docker rm web-flask || true
-                  docker run -d -p 5000:5000 --name web-flask secure-flask-app:latest
+                  docker run -d -p 5000:5000 --name web-flask \
+                    --network flask-net --restart unless-stopped \
+                    -e SECRET_KEY -e DB_HOST -e DB_PORT -e DB_NAME -e DB_USER -e DB_PASSWORD \
+                    secure-flask-app:latest
+                  sleep 5
                   docker ps | grep web-flask
+                  docker logs --tail 20 web-flask
 
     # ==========================================
     # NOTIFIKASI CD (hanya setelah merge / push ke main)
