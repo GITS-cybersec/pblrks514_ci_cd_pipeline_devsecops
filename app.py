@@ -11,7 +11,6 @@ from dotenv import load_dotenv
 from flask import (
     Flask,
     flash,
-    make_response,
     redirect,
     render_template,
     request,
@@ -114,12 +113,17 @@ def login_required(view):
         if "user_id" not in session:
             flash("Silakan login terlebih dahulu.", "warning")
             return redirect(url_for("index"))
-        response = make_response(view(*args, **kwargs))
-        # Cegah halaman privat tampil dari cache browser setelah logout.
-        response.headers["Cache-Control"] = "no-store"
-        return response
+        return view(*args, **kwargs)
 
     return wrapped
+
+
+@app.after_request
+def add_no_store_header(response):
+    """Cegah halaman privat tampil dari cache browser setelah logout."""
+    if "user_id" in session:
+        response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 def validate_registration(username, email, password, confirm):
