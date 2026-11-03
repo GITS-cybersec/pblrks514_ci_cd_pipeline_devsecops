@@ -118,8 +118,6 @@ jobs:
               run: mkdir -p $HOME/.cache/trivy
 
             - name: Scan Images with Trivy
-              # shell: bash wajib agar pipefail aktif, sehingga exit code Trivy
-              # tidak tertutup oleh "| tee" dan job benar-benar gagal saat ada temuan.
               shell: bash
               run: |
                   docker run --rm \
@@ -129,8 +127,6 @@ jobs:
                     --severity HIGH,CRITICAL \
                     --format table \
                     secure-flask-app:latest | tee trivy-scan-${{ env.TIMESTAMP }}.log
-                  # Opsional: tambahkan "--ignore-unfixed \" di atas agar hanya
-                  # temuan yang sudah punya patch yang memblokir pipeline.
 
             - name: Upload Trivy Logs
               uses: actions/upload-artifact@v4
